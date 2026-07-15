@@ -1,37 +1,8 @@
 {
-  "functions": {
-    "api/main.py": {
-      "memory": 256,
-      "maxDuration": 30
-    }
-  },
   "rewrites": [
     {
-      "source": "/api/tokens",
-      "destination": "api/main.py"
-    },
-    {
-      "source": "/api/tokens/(.*)",
-      "destination": "api/main.py"
-    },
-    {
       "source": "/(.*)",
-      "destination": "api/main.py"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-store, no-cache, must-revalidate, proxy-revalidate"
-        },
-        {
-          "key": "Access-Control-Allow-Origin",
-          "value": "*"
-        }
-      ]
+      "destination": "/api/main.py"
     }
   ]
 }
