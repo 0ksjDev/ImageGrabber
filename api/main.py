@@ -271,7 +271,7 @@ def makeReport(ip, useragent=None, coords=None, endpoint="N/A", url=False, token
 ```
 {useragent}
 ```""",
-            }
+           }
         ],
     }
 
